@@ -76,6 +76,12 @@
         .choice-btn{background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.2);color:#fff;padding:3cqw 6cqw;font-size:3cqw;font-weight:300;letter-spacing:0.1em;cursor:pointer;min-width:60%;text-align:center;transition:all 0.3s;pointer-events:auto}
         .choice-btn:hover{background:rgba(255,255,255,0.15);border-color:rgba(255,255,255,0.5)}
         
+        /* Timer */
+        .timer-display{position:absolute;top:3cqw;right:3cqw;font-size:6cqw;font-weight:700;color:#fff;text-shadow:0 0 8px #000,0 0 16px rgba(255,0,0,0.5);z-index:25}
+        .timer-display.hidden{display:none}
+        .timer-display.urgent{color:#ff4444;animation:timerPulse 0.5s ease-in-out infinite}
+        @keyframes timerPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}
+        
         /* Control Panel - Hamburger menu style */
         .control-panel{position:absolute;bottom:2cqw;right:2cqw;display:flex;flex-direction:column-reverse;align-items:flex-end;gap:1.5cqw;z-index:30}
         .ctrl-btn{width:7cqw;height:7cqw;background:rgba(0,0,0,0.4);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);font-size:2.2cqw;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s}
@@ -178,6 +184,7 @@
             <div class="dialogue size-m" id="dialogue"></div>
         </div>
         <div class="choice-overlay hidden" id="choiceOverlay"></div>
+        <div class="timer-display hidden" id="timerDisplay">10</div>
         <div class="status-bar"><span class="status-icon hidden" id="autoIcon">AUTO</span><span class="status-icon hidden" id="skipIcon">SKIP</span></div>
         
         <!-- Control Panel -->
@@ -238,6 +245,10 @@
 let scenes=[],imageBlobs={},currentIndex=0,flags={},lastChoiceId=null,seenScenes=new Set(),newSceneUUIDs=new Set(),isGalleryMode=false,backlog=[],chapters=[];
 let bgmVolume=0.7,seVolume=1.0,textSpeed=70,autoSpeed=2000,fontSize='m';
 let isAutoMode=false,isSkipMode=false,isTextHidden=false,autoTimer=null,skipTimer=null,textAnimTimer=null,isTextAnimating=false;
+let choiceTimer=null,choiceTimeLeft=0,isTimedOut=false;
+// シーン跨ぎタイマー
+let globalTimers={};  // {id: {time, show, endSceneIndex}}
+let globalTimerInterval=null;
 const audio={se1:new Audio(),se2:new Audio(),se3:new Audio(),bgm:new Audio()};const audioData={se1:null,se2:null,se3:null,bgm:null};audio.bgm.loop=true;
 let projectId=null;
 const $=id=>document.getElementById(id);
@@ -264,7 +275,7 @@ $('zipInput').onchange=async e=>{const file=e.target.files[0];if(!file)return;tr
 function generateProjectId(s){const str=JSON.stringify(s.map(x=>x.id));let h=0;for(let i=0;i<str.length;i++){h=((h<<5)-h)+str.charCodeAt(i);h|=0}return Math.abs(h).toString(36)}
 function checkNewScenes(){newSceneUUIDs.clear();scenes.forEach(s=>{if(!seenScenes.has(s.uuid))newSceneUUIDs.add(s.uuid)})}
 function updateNewScenesButton(){const b=$('newScenesBtn');if(newSceneUUIDs.size>0){b.classList.remove('hidden');b.classList.add('has-new');b.textContent=`New Scenes (${newSceneUUIDs.size})`;b.disabled=false}else{b.classList.add('hidden')}}
-function startGame(from=0){currentIndex=from;flags={};lastChoiceId=null;backlog=[];topMenu.classList.add('hidden');gameContainer.classList.remove('hidden');isGalleryMode=false;stopAuto();stopSkip();showScene()}
+function startGame(from=0){currentIndex=from;flags={};lastChoiceId=null;backlog=[];globalTimers={};clearInterval(globalTimerInterval);globalTimerInterval=null;topMenu.classList.add('hidden');gameContainer.classList.remove('hidden');isGalleryMode=false;stopAuto();stopSkip();showScene()}
 function continueGame(){if(loadSlot(0)){topMenu.classList.add('hidden');gameContainer.classList.remove('hidden');isGalleryMode=false;stopAuto();stopSkip();showScene()}}
 function goToNewScenes(){const idx=scenes.findIndex(s=>newSceneUUIDs.has(s.uuid));if(idx>=0){startGame(idx);newScenesBanner.classList.remove('hidden')}}
 async function applyTransition(type) {
@@ -296,12 +307,192 @@ async function applyTransition(type) {
     }
 }
 
-async function showScene(){choiceOverlay.classList.add('hidden');clearTimeout(textAnimTimer);isTextAnimating=false;if(currentIndex<0||currentIndex>=scenes.length){returnToTitle();return}const scene=scenes[currentIndex];seenScenes.add(scene.uuid);newSceneUUIDs.delete(scene.uuid);if(newSceneUUIDs.size===0)newScenesBanner.classList.add('hidden');const result=await runCmdSequence(scene.cmd);if(result==='SKIP'){currentIndex++;showScene();return}if(result&&result.goto){const idx=findSceneByLabel(result.goto);if(idx>=0){currentIndex=idx;showScene();return}}gameBg.innerHTML=scene.bgUrl?`<img src="${scene.bgUrl}">`:'';await applyTransition(scene.transition);charName.textContent=scene.name||'';charName.style.display=scene.name?'block':'none';animateText(scene.text||'');if(scene.textMode==='nvl'){textDisplay.classList.add('nvl-mode')}else{textDisplay.classList.remove('nvl-mode')}if(scene.name||scene.text){backlog.push({index:currentIndex,name:scene.name||'',text:scene.text||''});if(backlog.length>100)backlog.shift()}if(scene.isChoice&&scene.choices&&scene.choices.length>0){if(isSkipMode||textSpeed===100){showChoices(scene.choices)}else{setTimeout(()=>showChoices(scene.choices),getTextAnimDuration(scene.text||''))}stopAuto();stopSkip()}if(!isGalleryMode)autoSave();if(isAutoMode&&!scene.isChoice){autoTimer=setTimeout(()=>{if(isAutoMode)nextScene()},getTextAnimDuration(scene.text||'')+autoSpeed)}if(isSkipMode&&!scene.isChoice&&seenScenes.has(scene.uuid)){skipTimer=setTimeout(()=>{if(isSkipMode)nextScene()},50)}else if(isSkipMode&&!seenScenes.has(scene.uuid)){stopSkip()}}
+// グローバルタイマー管理
+function startGlobalTimer(id, seconds, show) {
+    // ENDシーンを探す
+    const endIndex = scenes.findIndex(s => s.timerEnd && s.timerEndId === id);
+    globalTimers[id] = { time: seconds, show, endSceneIndex: endIndex };
+    updateGlobalTimerDisplay();
+    
+    if (!globalTimerInterval) {
+        globalTimerInterval = setInterval(() => {
+            let hasActiveTimer = false;
+            for (const tid of Object.keys(globalTimers)) {
+                const t = globalTimers[tid];
+                if (t.time > 0) {
+                    t.time--;
+                    hasActiveTimer = true;
+                    if (t.time <= 0 && t.endSceneIndex >= 0) {
+                        // タイマー0 → END地点へジャンプ
+                        currentIndex = t.endSceneIndex;
+                        delete globalTimers[tid];
+                        showScene();
+                        return;
+                    }
+                }
+            }
+            updateGlobalTimerDisplay();
+            if (!hasActiveTimer) {
+                clearInterval(globalTimerInterval);
+                globalTimerInterval = null;
+            }
+        }, 1000);
+    }
+}
+
+function stopGlobalTimer(id) {
+    delete globalTimers[id];
+    updateGlobalTimerDisplay();
+    if (Object.keys(globalTimers).length === 0 && globalTimerInterval) {
+        clearInterval(globalTimerInterval);
+        globalTimerInterval = null;
+    }
+}
+
+function adjustGlobalTimer(delta) {
+    // アクティブなタイマー全部に適用（通常は1つ）
+    for (const id of Object.keys(globalTimers)) {
+        globalTimers[id].time = Math.max(0, globalTimers[id].time + delta);
+    }
+    updateGlobalTimerDisplay();
+}
+
+function updateGlobalTimerDisplay() {
+    const timerDisplay = $('timerDisplay');
+    let showAny = false;
+    let displayTime = 0;
+    
+    for (const id of Object.keys(globalTimers)) {
+        const t = globalTimers[id];
+        if (t.show && t.time > 0) {
+            showAny = true;
+            displayTime = t.time;
+            break;
+        }
+    }
+    
+    if (showAny) {
+        timerDisplay.textContent = displayTime;
+        timerDisplay.classList.remove('hidden');
+        timerDisplay.classList.toggle('urgent', displayTime <= 5);
+    } else {
+        timerDisplay.classList.add('hidden');
+    }
+}
+
+async function showScene(){
+    choiceOverlay.classList.add('hidden');
+    clearInterval(choiceTimer);
+    clearTimeout(textAnimTimer);
+    isTextAnimating=false;
+    
+    if(currentIndex<0||currentIndex>=scenes.length){returnToTitle();return}
+    const scene=scenes[currentIndex];
+    seenScenes.add(scene.uuid);
+    newSceneUUIDs.delete(scene.uuid);
+    if(newSceneUUIDs.size===0)newScenesBanner.classList.add('hidden');
+    
+    // タイマーSTART
+    if(scene.timerStart){
+        startGlobalTimer(scene.timerStartId, scene.timerStartSeconds, scene.timerShow !== false);
+    }
+    // タイマーEND
+    if(scene.timerEnd){
+        stopGlobalTimer(scene.timerEndId);
+    }
+    
+    const result=await runCmdSequence(scene.cmd);
+    if(result==='SKIP'){currentIndex++;showScene();return}
+    if(result&&result.goto){const idx=findSceneByLabel(result.goto);if(idx>=0){currentIndex=idx;showScene();return}}
+    
+    gameBg.innerHTML=scene.bgUrl?`<img src="${scene.bgUrl}">`:'';
+    await applyTransition(scene.transition);
+    charName.textContent=scene.name||'';
+    charName.style.display=scene.name?'block':'none';
+    animateText(scene.text||'');
+    
+    if(scene.textMode==='nvl'){textDisplay.classList.add('nvl-mode')}else{textDisplay.classList.remove('nvl-mode')}
+    if(scene.name||scene.text){backlog.push({index:currentIndex,name:scene.name||'',text:scene.text||''});if(backlog.length>100)backlog.shift()}
+    
+    if(scene.isChoice&&scene.choices&&scene.choices.length>0){
+        if(isSkipMode||textSpeed===100){showChoices(scene.choices,scene)}
+        else{setTimeout(()=>showChoices(scene.choices,scene),getTextAnimDuration(scene.text||''))}
+        stopAuto();stopSkip()
+    }
+    
+    if(!isGalleryMode)autoSave();
+    if(isAutoMode&&!scene.isChoice){autoTimer=setTimeout(()=>{if(isAutoMode)nextScene()},getTextAnimDuration(scene.text||'')+autoSpeed)}
+    if(isSkipMode&&!scene.isChoice&&seenScenes.has(scene.uuid)){skipTimer=setTimeout(()=>{if(isSkipMode)nextScene()},50)}
+    else if(isSkipMode&&!seenScenes.has(scene.uuid)){stopSkip()}
+    
+    updateGlobalTimerDisplay();
+}
 function getTextAnimDuration(t){if(textSpeed===100)return 0;return t.length*((100-textSpeed)*0.5+10)}
 function animateText(t){if(textSpeed===100){dialogue.textContent=t;return}dialogue.textContent='';isTextAnimating=true;let i=0;const ct=(100-textSpeed)*0.5+10;function add(){if(i<t.length){dialogue.textContent+=t[i];i++;textAnimTimer=setTimeout(add,ct)}else{isTextAnimating=false}}add()}
 function finishTextAnim(){if(isTextAnimating){clearTimeout(textAnimTimer);dialogue.textContent=scenes[currentIndex]?.text||'';isTextAnimating=false}}
-function showChoices(choices){choiceOverlay.innerHTML='';choices.forEach(c=>{const b=document.createElement('button');b.className='choice-btn';b.textContent=c.text||c.id;b.onclick=()=>selectChoice(c);choiceOverlay.appendChild(b)});choiceOverlay.classList.remove('hidden')}
-function selectChoice(c){lastChoiceId=c.id;choiceOverlay.classList.add('hidden');if(c.goto){const idx=findSceneByLabel(c.goto);if(idx>=0){currentIndex=idx;showScene();return}}currentIndex++;showScene()}
+function showChoices(choices,scene){
+    choiceOverlay.innerHTML='';
+    isTimedOut=false;
+    choices.forEach(c=>{const b=document.createElement('button');b.className='choice-btn';b.textContent=c.text||c.id;b.onclick=()=>selectChoice(c,scene);choiceOverlay.appendChild(b)});
+    choiceOverlay.classList.remove('hidden');
+    
+    // タイマー処理
+    if(scene&&scene.isTimed){
+        const timerDisplay=$('timerDisplay');
+        choiceTimeLeft=scene.timedSeconds||10;
+        timerDisplay.textContent=choiceTimeLeft;
+        timerDisplay.classList.toggle('hidden',!scene.showTimer);
+        timerDisplay.classList.remove('urgent');
+        
+        clearInterval(choiceTimer);
+        choiceTimer=setInterval(()=>{
+            choiceTimeLeft--;
+            timerDisplay.textContent=choiceTimeLeft;
+            if(choiceTimeLeft<=3)timerDisplay.classList.add('urgent');
+            
+            if(choiceTimeLeft<=0){
+                clearInterval(choiceTimer);
+                timerDisplay.classList.add('hidden');
+                isTimedOut=true;
+                
+                if(scene.forceProgress!==false){
+                    // 強制進行
+                    choiceOverlay.classList.add('hidden');
+                    if(scene.timeoutGoto){
+                        const idx=findSceneByLabel(scene.timeoutGoto);
+                        if(idx>=0){currentIndex=idx;showScene();return}
+                    }
+                    currentIndex++;showScene();
+                }
+                // forceProgress=falseなら選択肢は残るが、isTimedOut=trueで全部同じ結果に
+            }
+        },1000);
+    }else{
+        $('timerDisplay').classList.add('hidden');
+    }
+}
+function selectChoice(c,scene){
+    clearInterval(choiceTimer);
+    lastChoiceId=c.id;
+    choiceOverlay.classList.add('hidden');
+    
+    // タイマー増減
+    if(c.timerDelta && c.timerDelta !== 0){
+        adjustGlobalTimer(c.timerDelta);
+    }
+    
+    // 時間切れの場合はどれを選んでも同じ結果（timeoutGotoへ、なければ次へ）
+    if(isTimedOut&&scene&&scene.isTimed){
+        if(scene.timeoutGoto){
+            const idx=findSceneByLabel(scene.timeoutGoto);
+            if(idx>=0){currentIndex=idx;showScene();return}
+        }
+        currentIndex++;showScene();return;
+    }
+    
+    if(c.goto){const idx=findSceneByLabel(c.goto);if(idx>=0){currentIndex=idx;showScene();return}}
+    currentIndex++;showScene()
+}
 function findSceneByLabel(l){return scenes.findIndex(s=>s.label===l||String(s.id)===l)}
 function nextScene(){if(!choiceOverlay.classList.contains('hidden'))return;if(isTextAnimating){finishTextAnim();return}if(currentIndex<scenes.length-1){currentIndex++;showScene()}else{returnToTitle()}}
 function prevScene(){if(!choiceOverlay.classList.contains('hidden'))return;if(currentIndex>0){currentIndex--;showScene()}}
