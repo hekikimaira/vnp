@@ -308,17 +308,19 @@ async function applyTransition(type) {
 }
 
 // グローバルタイマー管理
-function startGlobalTimer(id, seconds, show) {
+function startGlobalTimer(id, seconds, show, mode = 'realtime') {
     // ENDシーンを探す
     const endIndex = scenes.findIndex(s => s.timerEnd && s.timerEndId === id);
-    globalTimers[id] = { time: seconds, show, endSceneIndex: endIndex };
+    globalTimers[id] = { time: seconds, show, endSceneIndex: endIndex, mode };
     updateGlobalTimerDisplay();
     
-    if (!globalTimerInterval) {
+    // リアルタイムモードの場合のみインターバル開始
+    if (mode === 'realtime' && !globalTimerInterval) {
         globalTimerInterval = setInterval(() => {
             let hasActiveTimer = false;
             for (const tid of Object.keys(globalTimers)) {
                 const t = globalTimers[tid];
+                if (t.mode !== 'realtime') continue; // 選択式はスキップ
                 if (t.time > 0) {
                     t.time--;
                     hasActiveTimer = true;
@@ -332,7 +334,9 @@ function startGlobalTimer(id, seconds, show) {
                 }
             }
             updateGlobalTimerDisplay();
-            if (!hasActiveTimer) {
+            // リアルタイムタイマーがなければ停止
+            const hasRealtime = Object.values(globalTimers).some(t => t.mode === 'realtime' && t.time > 0);
+            if (!hasRealtime) {
                 clearInterval(globalTimerInterval);
                 globalTimerInterval = null;
             }
@@ -352,7 +356,16 @@ function stopGlobalTimer(id) {
 function adjustGlobalTimer(delta) {
     // アクティブなタイマー全部に適用（通常は1つ）
     for (const id of Object.keys(globalTimers)) {
-        globalTimers[id].time = Math.max(0, globalTimers[id].time + delta);
+        const t = globalTimers[id];
+        t.time = Math.max(0, t.time + delta);
+        // 選択式でタイマー0になったらEND地点へ
+        if (t.time <= 0 && t.mode === 'choice' && t.endSceneIndex >= 0) {
+            currentIndex = t.endSceneIndex;
+            delete globalTimers[id];
+            updateGlobalTimerDisplay();
+            showScene();
+            return;
+        }
     }
     updateGlobalTimerDisplay();
 }
@@ -394,7 +407,7 @@ async function showScene(){
     
     // タイマーSTART
     if(scene.timerStart){
-        startGlobalTimer(scene.timerStartId, scene.timerStartSeconds, scene.timerShow !== false);
+        startGlobalTimer(scene.timerStartId, scene.timerStartSeconds, scene.timerShow !== false, scene.timerMode || 'realtime');
     }
     // タイマーEND
     if(scene.timerEnd){
