@@ -541,12 +541,12 @@ async function runCmd(cmd){
     cmd=cmd.toUpperCase().trim(); if(cmd.startsWith('@'))cmd=cmd.slice(1); let m;
     // 新SE構文: SE:name または SE:name:count
     m=cmd.match(/^SE:([^:]+)(?::(\d+))?$/);
-    if(m){const name=origCmd.trim().split(':')[1].toLowerCase();const count=m[2]!==undefined?+m[2]:1;await playSE(name,count);return null}
+    if(m){const name=origCmd.trim().split(':')[1].toLowerCase();const count=m[2]!==undefined?+m[2]:1;playSE(name,count);return null}
     // SE停止
     m=cmd.match(/^SE:STOP(?::(.+))?$/);
     if(m){if(m[1])stopSE(m[1].toLowerCase());else stopAllSE();return null}
     // 旧SE構文（後方互換）
-    m=cmd.match(/^([123])SE(\d+)$/); if(m){await playSE('se0'+m[1],+m[2]);return null}
+    m=cmd.match(/^([123])SE(\d+)$/); if(m){playSE('se0'+m[1],+m[2]);return null}
     m=cmd.match(/^FLASH(\d*)$/); if(m){const n=+m[1]||1;for(let i=0;i<n;i++){doFlash();if(i<n-1)await sleep(150)}return null}
     m=cmd.match(/^SHAKE(\d*)$/); if(m){const n=+m[1]||1;for(let i=0;i<n;i++){doShake();if(i<n-1)await sleep(300)}return null}
     // 新BGM構文
