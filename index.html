@@ -418,10 +418,27 @@ function toggleTextHidden(){isTextHidden=!isTextHidden;textDisplay.classList.tog
 function doFlash(){flashOverlay.classList.remove('active');void flashOverlay.offsetWidth;flashOverlay.classList.add('active')}
 function doShake(){gameCanvas.classList.remove('shake');void gameCanvas.offsetWidth;gameCanvas.classList.add('shake')}
 function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
-async function playSE(name,count){const se=seAudios[name];if(!se)return;se.audio.volume=seVolume;if(count===0){const loop=()=>{se.audio.currentTime=0;se.audio.play()};se.audio.onended=loop;loop();loopingSe[name]=true;return}for(let i=0;i<count;i++){se.audio.currentTime=0;await se.audio.play();await new Promise(r=>se.audio.onended=r)}}
+async function playSE(name,count){
+    console.log('playSE:',name,count,'seAudios:',Object.keys(seAudios));
+    const se=seAudios[name];
+    if(!se){console.log('SE not found:',name);return}
+    se.audio.volume=seVolume;
+    if(count===0){const loop=()=>{se.audio.currentTime=0;se.audio.play()};se.audio.onended=loop;loop();loopingSe[name]=true;return}
+    // 1回だけ再生開始（awaitしない）
+    se.audio.currentTime=0;
+    se.audio.play().catch(e=>console.log('SE play error:',e));
+}
 function stopSE(name){const se=seAudios[name];if(!se)return;se.audio.pause();se.audio.currentTime=0;se.audio.onended=null;delete loopingSe[name]}
 function stopAllSE(){Object.keys(seAudios).forEach(name=>stopSE(name))}
-function playBGM(name){if(currentBgm&&bgmAudios[currentBgm]){bgmAudios[currentBgm].audio.pause();bgmAudios[currentBgm].audio.currentTime=0}const bgm=bgmAudios[name];if(!bgm)return;bgm.audio.loop=true;bgm.audio.volume=bgmVolume;bgm.audio.play();currentBgm=name}
+function playBGM(name){
+    console.log('playBGM:',name,'bgmAudios:',Object.keys(bgmAudios));
+    if(currentBgm&&bgmAudios[currentBgm]){bgmAudios[currentBgm].audio.pause();bgmAudios[currentBgm].audio.currentTime=0}
+    const bgm=bgmAudios[name];
+    if(!bgm){console.log('BGM not found:',name);return}
+    bgm.audio.loop=true;bgm.audio.volume=bgmVolume;
+    bgm.audio.play().catch(e=>console.log('BGM play error:',e));
+    currentBgm=name;
+}
 function stopBGM(){if(currentBgm&&bgmAudios[currentBgm]){bgmAudios[currentBgm].audio.pause();bgmAudios[currentBgm].audio.currentTime=0}currentBgm=null}
 
 // ===== Overlay System =====
