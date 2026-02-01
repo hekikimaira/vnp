@@ -280,7 +280,18 @@ function dlog(msg,type='info'){
     if(con.children.length>debugMaxEntries)con.removeChild(con.firstChild);
     con.scrollTop=con.scrollHeight;
 }
-const seAudios={};const bgmAudios={};let currentBgm=null;let loopingSe={};
+// AudioContext for SE/BGM
+let audioCtx=null;
+function getAudioCtx(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();return audioCtx}
+function unlockAudioCtx(){const ctx=getAudioCtx();if(ctx.state==='suspended')ctx.resume().then(()=>dlog('AudioContext resumed: '+ctx.state,'audio'));dlog('AudioContext state: '+ctx.state,'audio')}
+const seBuffers={};   // {name: AudioBuffer}
+const bgmBuffers={};  // {name: AudioBuffer}
+const seAudios={};    // kept for compatibility - {name: {url}}
+const bgmAudios={};   // kept for compatibility - {name: {url}}
+let currentBgmSource=null;
+let currentBgmGain=null;
+let currentBgm=null;
+let loopingSe={};     // {name: {source, gain}}
 let projectId=null;
 
 // Counter system (persistent across playthroughs)
@@ -384,19 +395,19 @@ function autoSave(){saveSlot(0)}
 function quickSave(){saveSlot(-1);showToast('Quick Saved')}
 function quickLoad(){if(loadSlot(-1)){showScene();showToast('Quick Loaded')}else{showToast('No save data')}}
 function showToast(msg){const t=document.createElement('div');t.style.cssText='position:fixed;bottom:20%;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.8);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.1);color:#fff;padding:12px 24px;z-index:300;font-size:12px;letter-spacing:0.1em;';t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),1500)}
-function updateSettingsUI(){$('bgmVolume').value=bgmVolume*100;$('seVolume').value=seVolume*100;$('settingsBgmVolume').value=bgmVolume*100;$('settingsSeVolume').value=seVolume*100;$('textSpeed').value=textSpeed;$('settingsTextSpeed').value=textSpeed;$('autoSpeed').value=autoSpeed;if(currentBgm&&bgmAudios[currentBgm])bgmAudios[currentBgm].audio.volume=bgmVolume;document.querySelectorAll('.size-btn').forEach(b=>b.classList.toggle('active',b.dataset.size===fontSize));charName.className=`char-name size-${fontSize}`;dialogue.className=`dialogue size-${fontSize}`}
-['bgmVolume','settingsBgmVolume'].forEach(id=>{$(id).oninput=e=>{bgmVolume=e.target.value/100;if(currentBgm&&bgmAudios[currentBgm])bgmAudios[currentBgm].audio.volume=bgmVolume;updateSettingsUI();saveProgress()}});
+function updateSettingsUI(){$('bgmVolume').value=bgmVolume*100;$('seVolume').value=seVolume*100;$('settingsBgmVolume').value=bgmVolume*100;$('settingsSeVolume').value=seVolume*100;$('textSpeed').value=textSpeed;$('settingsTextSpeed').value=textSpeed;$('autoSpeed').value=autoSpeed;if(currentBgmGain)currentBgmGain.gain.value=bgmVolume;document.querySelectorAll('.size-btn').forEach(b=>b.classList.toggle('active',b.dataset.size===fontSize));charName.className=`char-name size-${fontSize}`;dialogue.className=`dialogue size-${fontSize}`}
+['bgmVolume','settingsBgmVolume'].forEach(id=>{$(id).oninput=e=>{bgmVolume=e.target.value/100;if(currentBgmGain)currentBgmGain.gain.value=bgmVolume;updateSettingsUI();saveProgress()}});
 ['seVolume','settingsSeVolume'].forEach(id=>{$(id).oninput=e=>{seVolume=e.target.value/100;updateSettingsUI();saveProgress()}});
 ['textSpeed','settingsTextSpeed'].forEach(id=>{$(id).oninput=e=>{textSpeed=+e.target.value;updateSettingsUI();saveProgress()}});
 $('autoSpeed').oninput=e=>{autoSpeed=+e.target.value;saveProgress()};
 document.querySelectorAll('.size-btn').forEach(b=>{b.onclick=()=>{fontSize=b.dataset.size;updateSettingsUI();saveProgress()}});
 
-$('zipInput').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{const zip=await JSZip.loadAsync(file);scenes=[];imageBlobs={};chapters=[];Object.keys(seAudios).forEach(k=>delete seAudios[k]);Object.keys(bgmAudios).forEach(k=>delete bgmAudios[k]);currentBgm=null;const imgFolder=zip.folder('images');if(imgFolder){const files=[];imgFolder.forEach((p,f)=>{if(!f.dir)files.push({p,f})});for(const{p,f}of files){const blob=await f.async('blob');const filename=p.split('/').pop();imageBlobs[filename]=URL.createObjectURL(blob)}}const audioFolder=zip.folder('audio');if(audioFolder){const af=[];audioFolder.forEach((p,f)=>{if(!f.dir)af.push({p,f})});for(const{p,f}of af){const blob=await f.async('blob');const url=URL.createObjectURL(blob);const filename=p.split('/').pop();const name=filename.split('.')[0].toLowerCase();dlog('Audio loaded: '+p+' -> '+name,'audio');console.log('Audio loaded:',p,'->',name);if(name.startsWith('se')){const audio=new Audio(url);seAudios[name]={audio,url};dlog('  SE registered: '+name,'audio')}else if(name.startsWith('bgm')){const audio=new Audio(url);audio.loop=true;bgmAudios[name]={audio,url};dlog('  BGM registered: '+name,'audio')}}}const dataFile=zip.file('data.json');if(dataFile){const json=await dataFile.async('string');const data=JSON.parse(json);projectId=generateProjectId(data.scenes);scenes=(data.scenes||[]).map((s,i)=>({...s,uuid:s.uuid||`scene-${i}-${s.id}`,bgUrl:s.bg&&imageBlobs[s.bg]?imageBlobs[s.bg]:null}));chapters=data.chapters||[];if(data.title)$('gameTitle').textContent=data.title}loadProgress();loadCounters();checkNewScenes();$('startBtn').disabled=false;$('galleryBtn').disabled=false;$('continueBtn').disabled=!getSlotInfo(0).exists;$('chaptersBtn').classList.toggle('hidden',chapters.length===0);updateNewScenesButton();dlog('ZIP loaded: '+scenes.length+' scenes, '+Object.keys(seAudios).length+' SE ['+Object.keys(seAudios).join(',')+'], '+Object.keys(bgmAudios).length+' BGM ['+Object.keys(bgmAudios).join(',')+'], '+Object.keys(imageBlobs).length+' images','info')}catch(err){console.error(err);dlog('ZIP load error: '+err.message,'error');alert('Load error: '+err.message)}};
+$('zipInput').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{const zip=await JSZip.loadAsync(file);scenes=[];imageBlobs={};chapters=[];Object.keys(seBuffers).forEach(k=>delete seBuffers[k]);Object.keys(bgmBuffers).forEach(k=>delete bgmBuffers[k]);Object.keys(seAudios).forEach(k=>delete seAudios[k]);Object.keys(bgmAudios).forEach(k=>delete bgmAudios[k]);currentBgm=null;if(currentBgmSource){try{currentBgmSource.stop()}catch(e){}}currentBgmSource=null;currentBgmGain=null;Object.keys(loopingSe).forEach(k=>{try{loopingSe[k].source.stop()}catch(e){}});loopingSe={};const ctx=getAudioCtx();const imgFolder=zip.folder('images');if(imgFolder){const files=[];imgFolder.forEach((p,f)=>{if(!f.dir)files.push({p,f})});for(const{p,f}of files){const blob=await f.async('blob');const filename=p.split('/').pop();imageBlobs[filename]=URL.createObjectURL(blob)}}const audioFolder=zip.folder('audio');if(audioFolder){const af=[];audioFolder.forEach((p,f)=>{if(!f.dir)af.push({p,f})});for(const{p,f}of af){const arrayBuf=await f.async('arraybuffer');const filename=p.split('/').pop();const name=filename.split('.')[0].toLowerCase();dlog('Audio decoding: '+p+' -> '+name,'audio');try{const audioBuf=await ctx.decodeAudioData(arrayBuf.slice(0));if(name.startsWith('se')){seBuffers[name]=audioBuf;seAudios[name]={url:''};dlog('  SE decoded: '+name+' ('+audioBuf.duration.toFixed(2)+'s)','audio')}else if(name.startsWith('bgm')){bgmBuffers[name]=audioBuf;bgmAudios[name]={url:''};dlog('  BGM decoded: '+name+' ('+audioBuf.duration.toFixed(2)+'s)','audio')}}catch(decErr){dlog('Audio decode error: '+name+' '+decErr.message,'error')}}}const dataFile=zip.file('data.json');if(dataFile){const json=await dataFile.async('string');const data=JSON.parse(json);projectId=generateProjectId(data.scenes);scenes=(data.scenes||[]).map((s,i)=>({...s,uuid:s.uuid||`scene-${i}-${s.id}`,bgUrl:s.bg&&imageBlobs[s.bg]?imageBlobs[s.bg]:null}));chapters=data.chapters||[];if(data.title)$('gameTitle').textContent=data.title}loadProgress();loadCounters();checkNewScenes();$('startBtn').disabled=false;$('galleryBtn').disabled=false;$('continueBtn').disabled=!getSlotInfo(0).exists;$('chaptersBtn').classList.toggle('hidden',chapters.length===0);updateNewScenesButton();dlog('ZIP loaded: '+scenes.length+' scenes, '+Object.keys(seBuffers).length+' SE ['+Object.keys(seBuffers).join(',')+'], '+Object.keys(bgmBuffers).length+' BGM ['+Object.keys(bgmBuffers).join(',')+'], '+Object.keys(imageBlobs).length+' images','info')}catch(err){console.error(err);dlog('ZIP load error: '+err.message,'error');alert('Load error: '+err.message)}};
 function generateProjectId(s){const str=JSON.stringify(s.map(x=>x.id));let h=0;for(let i=0;i<str.length;i++){h=((h<<5)-h)+str.charCodeAt(i);h|=0}return Math.abs(h).toString(36)}
 function checkNewScenes(){newSceneUUIDs.clear();scenes.forEach(s=>{if(!seenScenes.has(s.uuid))newSceneUUIDs.add(s.uuid)})}
 function updateNewScenesButton(){const b=$('newScenesBtn');if(newSceneUUIDs.size>0){b.classList.remove('hidden');b.classList.add('has-new');b.textContent=`New Scenes (${newSceneUUIDs.size})`;b.disabled=false}else{b.classList.add('hidden')}}
-function startGame(from=0){currentIndex=from;flags={};lastChoiceId=null;backlog=[];globalTimers={};stopGlobalTimerTick();updateGlobalTimerDisplay();overlayContainer.innerHTML='';activeOverlays={};topMenu.classList.add('hidden');gameContainer.classList.remove('hidden');isGalleryMode=false;stopAuto();stopSkip();showScene()}
-function continueGame(){if(loadSlot(0)){topMenu.classList.add('hidden');gameContainer.classList.remove('hidden');isGalleryMode=false;stopAuto();stopSkip();showScene()}}
+function startGame(from=0){unlockAudioCtx();currentIndex=from;flags={};lastChoiceId=null;backlog=[];globalTimers={};stopGlobalTimerTick();updateGlobalTimerDisplay();overlayContainer.innerHTML='';activeOverlays={};topMenu.classList.add('hidden');gameContainer.classList.remove('hidden');isGalleryMode=false;stopAuto();stopSkip();showScene()}
+function continueGame(){unlockAudioCtx();if(loadSlot(0)){topMenu.classList.add('hidden');gameContainer.classList.remove('hidden');isGalleryMode=false;stopAuto();stopSkip();showScene()}}
 function goToNewScenes(){const idx=scenes.findIndex(s=>newSceneUUIDs.has(s.uuid));if(idx>=0){startGame(idx);newScenesBanner.classList.remove('hidden')}}
 async function applyTransition(type) {
     const overlay = $('transitionOverlay'); const bg = gameBg;
@@ -460,29 +471,42 @@ function doFlash(){flashOverlay.classList.remove('active');void flashOverlay.off
 function doShake(){gameCanvas.classList.remove('shake');void gameCanvas.offsetWidth;gameCanvas.classList.add('shake')}
 function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
 async function playSE(name,count){
-    dlog('playSE: '+name+' count='+count+' keys=['+Object.keys(seAudios).join(',')+']','audio');
-    console.log('playSE:',name,count,'seAudios:',Object.keys(seAudios));
-    const se=seAudios[name];
-    if(!se){dlog('SE not found: '+name,'error');console.log('SE not found:',name);return}
-    se.audio.volume=seVolume;
-    if(count===0){const loop=()=>{se.audio.currentTime=0;se.audio.play()};se.audio.onended=loop;loop();loopingSe[name]=true;dlog('SE loop start: '+name,'audio');return}
-    // 1回だけ再生開始（awaitしない）
-    se.audio.currentTime=0;
-    se.audio.play().then(()=>dlog('SE playing: '+name,'audio')).catch(e=>{dlog('SE play error: '+name+' '+e.message,'error');console.log('SE play error:',e)});
+    dlog('playSE: '+name+' count='+count+' keys=['+Object.keys(seBuffers).join(',')+']','audio');
+    const buf=seBuffers[name];
+    if(!buf){dlog('SE not found: '+name,'error');return}
+    const ctx=getAudioCtx();
+    if(ctx.state==='suspended')await ctx.resume();
+    const gain=ctx.createGain();
+    gain.gain.value=seVolume;
+    gain.connect(ctx.destination);
+    if(count===0){
+        // 無限ループ
+        const playLoop=()=>{const src=ctx.createBufferSource();src.buffer=buf;src.connect(gain);src.onended=()=>{if(loopingSe[name])playLoop()};src.start(0);loopingSe[name]={source:src,gain}};
+        playLoop();dlog('SE loop start: '+name,'audio');return;
+    }
+    // 1回再生
+    const src=ctx.createBufferSource();
+    src.buffer=buf;src.connect(gain);src.start(0);
+    dlog('SE playing: '+name,'audio');
 }
-function stopSE(name){const se=seAudios[name];if(!se)return;se.audio.pause();se.audio.currentTime=0;se.audio.onended=null;delete loopingSe[name]}
-function stopAllSE(){Object.keys(seAudios).forEach(name=>stopSE(name))}
+function stopSE(name){if(!loopingSe[name])return;try{loopingSe[name].source.stop()}catch(e){}delete loopingSe[name];dlog('SE stopped: '+name,'audio')}
+function stopAllSE(){Object.keys(loopingSe).forEach(name=>stopSE(name))}
 function playBGM(name){
-    dlog('playBGM: '+name+' keys=['+Object.keys(bgmAudios).join(',')+']','audio');
-    console.log('playBGM:',name,'bgmAudios:',Object.keys(bgmAudios));
-    if(currentBgm&&bgmAudios[currentBgm]){bgmAudios[currentBgm].audio.pause();bgmAudios[currentBgm].audio.currentTime=0}
-    const bgm=bgmAudios[name];
-    if(!bgm){dlog('BGM not found: '+name,'error');console.log('BGM not found:',name);return}
-    bgm.audio.loop=true;bgm.audio.volume=bgmVolume;
-    bgm.audio.play().then(()=>dlog('BGM playing: '+name,'audio')).catch(e=>{dlog('BGM play error: '+name+' '+e.message,'error');console.log('BGM play error:',e)});
-    currentBgm=name;
+    dlog('playBGM: '+name+' keys=['+Object.keys(bgmBuffers).join(',')+']','audio');
+    stopBGM();
+    const buf=bgmBuffers[name];
+    if(!buf){dlog('BGM not found: '+name,'error');return}
+    const ctx=getAudioCtx();
+    if(ctx.state==='suspended')ctx.resume();
+    const gain=ctx.createGain();
+    gain.gain.value=bgmVolume;
+    gain.connect(ctx.destination);
+    const src=ctx.createBufferSource();
+    src.buffer=buf;src.loop=true;src.connect(gain);src.start(0);
+    currentBgmSource=src;currentBgmGain=gain;currentBgm=name;
+    dlog('BGM playing: '+name,'audio');
 }
-function stopBGM(){if(currentBgm&&bgmAudios[currentBgm]){bgmAudios[currentBgm].audio.pause();bgmAudios[currentBgm].audio.currentTime=0}currentBgm=null}
+function stopBGM(){if(currentBgmSource){try{currentBgmSource.stop()}catch(e){}}currentBgmSource=null;currentBgmGain=null;currentBgm=null}
 
 // ===== Overlay System =====
 function parseEasing(e) {
