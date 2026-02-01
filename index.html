@@ -522,6 +522,50 @@ function parseSpeed(s) {
     if (str === 'normal') return 500;
     return parseInt(str) || 500;
 }
+// Keyframe overlay: OVERLAY:file:KEYFRAME:duration:easing:loop:x0,y0>x1,y1>x2,y2...
+// Each point is x%,y% of container. Generates smooth @keyframes animation.
+let keyframeCounter = 0;
+function runKeyframeOverlay(filename, points, duration, easing, loopCount, options) {
+    const imgUrl = imageBlobs[filename];
+    if (!imgUrl) { dlog('Overlay image not found: '+filename,'error'); return; }
+    
+    const el = document.createElement('div');
+    el.className = 'overlay-item';
+    const scaleStr = options.scale ? `;width:${options.scale}%` : '';
+    const flipStr = options.flip ? 'transform:scaleX(-1);' : '';
+    el.innerHTML = `<img src="${imgUrl}" style="${flipStr}${scaleStr?'width:'+options.scale+'%':''}">`;
+    el.dataset.overlayId = filename;
+    overlayContainer.appendChild(el);
+    activeOverlays[filename] = { element: el };
+    
+    // Generate @keyframes
+    const animName = `ov_kf_${++keyframeCounter}`;
+    let kfStr = `@keyframes ${animName} {\n`;
+    for (let i = 0; i < points.length; i++) {
+        const pct = points.length === 1 ? 0 : Math.round((i / (points.length - 1)) * 100);
+        const p = points[i];
+        kfStr += `  ${pct}% { left:${p.x}%; top:${p.y}%; }\n`;
+    }
+    kfStr += '}';
+    
+    // Inject style
+    const styleEl = document.createElement('style');
+    styleEl.textContent = kfStr;
+    document.head.appendChild(styleEl);
+    
+    const iterStr = loopCount === Infinity ? 'infinite' : String(loopCount);
+    const fillStr = loopCount === Infinity ? 'none' : 'forwards';
+    el.style.animation = `${animName} ${duration}ms ${easing} ${iterStr} ${fillStr}`;
+    
+    dlog('Overlay KEYFRAME: '+filename+' pts='+points.length+' dur='+duration+'ms loop='+iterStr,'cmd');
+    
+    // Cleanup after finite animation
+    if (loopCount !== Infinity) {
+        setTimeout(() => {
+            styleEl.remove();
+        }, duration * loopCount + 100);
+    }
+}
 async function runOverlay(cmd) {
     // OVERLAY:CLEAR or OVERLAY:CLEAR:fade:300ms or OVERLAY:CLEAR:filename
     if (cmd.startsWith('CLEAR')) {
@@ -542,6 +586,82 @@ async function runOverlay(cmd) {
             ov.element.remove();
             delete activeOverlays[id];
         }
+        return;
+    }
+    // KEYFRAME mode: OVERLAY:file:KEYFRAME:points:duration:easing:loop:options
+    // points = x,y>x,y>x,y  (% of container)
+    // options = flip,scale50 etc
+    const upperCmd = cmd.toUpperCase();
+    if (upperCmd.includes(':KEYFRAME:') || upperCmd.includes(':KF:')) {
+        const parts = cmd.split(':');
+        const filename = parts[0];
+        const kfIdx = parts.findIndex(p => p.toUpperCase() === 'KEYFRAME' || p.toUpperCase() === 'KF');
+        const pointsStr = parts[kfIdx + 1] || '0,0>100,0';
+        const durationStr = parts[kfIdx + 2];
+        const easingStr = parts[kfIdx + 3];
+        const loopStr = parts[kfIdx + 4];
+        const optStr = parts[kfIdx + 5] || '';
+        
+        const points = pointsStr.split('>').map(p => {
+            const [x, y] = p.split(',').map(Number);
+            return { x: x || 0, y: y || 0 };
+        });
+        const duration = parseSpeed(durationStr || '800ms');
+        const easing = parseEasing(easingStr);
+        const loopCount = loopStr === 'loop' ? Infinity : (parseInt(loopStr) || 1);
+        const options = {};
+        if (optStr) {
+            if (optStr.toLowerCase().includes('flip')) options.flip = true;
+            const sm = optStr.match(/scale(\d+)/i);
+            if (sm) options.scale = parseInt(sm[1]);
+        }
+        runKeyframeOverlay(filename, points, duration, easing, loopCount, options);
+        return;
+    }
+    // JUMP shorthand: OVERLAY:file:JUMP:startX,startY>endX,endY:height:duration:easing:loop:options
+    if (upperCmd.includes(':JUMP:')) {
+        const parts = cmd.split(':');
+        const filename = parts[0];
+        const jIdx = parts.findIndex(p => p.toUpperCase() === 'JUMP');
+        const pathStr = parts[jIdx + 1] || '-20,80>120,80';
+        const heightStr = parts[jIdx + 2] || '40';
+        const durationStr = parts[jIdx + 3];
+        const easingStr = parts[jIdx + 4];
+        const loopStr = parts[jIdx + 5];
+        const optStr = parts[jIdx + 6] || '';
+        
+        // Parse start and end
+        const pathPoints = pathStr.split('>').map(p => {
+            const [x, y] = p.split(',').map(Number);
+            return { x: x || 0, y: y || 0 };
+        });
+        const jumpHeight = parseFloat(heightStr) || 40;
+        const duration = parseSpeed(durationStr || '800ms');
+        const easing = parseEasing(easingStr || 'easeinout');
+        const loopCount = loopStr === 'loop' ? Infinity : (parseInt(loopStr) || 1);
+        const options = {};
+        if (optStr) {
+            if (optStr.toLowerCase().includes('flip')) options.flip = true;
+            const sm = optStr.match(/scale(\d+)/i);
+            if (sm) options.scale = parseInt(sm[1]);
+        }
+        
+        // Generate parabolic arc points (12 steps for smoothness)
+        const steps = 12;
+        const start = pathPoints[0];
+        const end = pathPoints.length > 1 ? pathPoints[1] : { x: start.x + 100, y: start.y };
+        const points = [];
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const x = start.x + (end.x - start.x) * t;
+            const baseY = start.y + (end.y - start.y) * t;
+            // Parabola: peak at t=0.5
+            const arc = -4 * jumpHeight * t * (1 - t);
+            const y = baseY + arc;
+            points.push({ x, y });
+        }
+        
+        runKeyframeOverlay(filename, points, duration, easing, loopCount, options);
         return;
     }
     // OVERLAY:file.png:direction:path:speed:easing:loop
