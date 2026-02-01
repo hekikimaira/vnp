@@ -102,6 +102,21 @@
         .side-menu-btn:hover{color:var(--text)}
         .side-menu-close{position:absolute;top:16px;right:16px;background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer;padding:8px}
         .side-menu-close:hover{color:var(--text)}
+        .debug-console{position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:200;display:flex;flex-direction:column;font-family:'Courier New',monospace}
+        .debug-console.hidden{display:none}
+        .debug-header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #333;flex-shrink:0}
+        .debug-header-title{color:#0f0;font-size:12px;letter-spacing:0.1em}
+        .debug-header-btns{display:flex;gap:8px}
+        .debug-header-btn{background:transparent;border:1px solid #444;color:#aaa;font-size:11px;padding:4px 10px;cursor:pointer;font-family:inherit}
+        .debug-header-btn:hover{border-color:#0f0;color:#0f0}
+        .debug-log{flex:1;overflow-y:auto;padding:10px 14px;-webkit-overflow-scrolling:touch}
+        .debug-log-entry{font-size:11px;line-height:1.6;border-bottom:1px solid #1a1a1a;padding:3px 0;word-break:break-all}
+        .debug-log-entry.info{color:#8f8}
+        .debug-log-entry.warn{color:#ff0}
+        .debug-log-entry.error{color:#f44}
+        .debug-log-entry.cmd{color:#4af}
+        .debug-log-entry.audio{color:#f8f}
+        .debug-log-entry .debug-time{color:#666;margin-right:6px}
         
         .setting-row{display:flex;align-items:center;gap:12px;padding:8px 0}
         .setting-label{font-size:11px;color:var(--text-dim);min-width:50px}
@@ -218,6 +233,8 @@
         <button class="side-menu-btn" id="sideMenuBacklog">Backlog</button>
         <button class="side-menu-btn" id="sideMenuGallery">Gallery</button>
         <button class="side-menu-btn" id="sideMenuTitle">Title</button>
+        <div class="side-menu-title">Debug</div>
+        <button class="side-menu-btn" id="sideMenuDebug">Debug Console</button>
         <div class="side-menu-title">Sound</div>
         <div class="setting-row"><span class="setting-label">BGM</span><input type="range" class="setting-slider" id="bgmVolume" min="0" max="100" value="70"></div>
         <div class="setting-row"><span class="setting-label">SE</span><input type="range" class="setting-slider" id="seVolume" min="0" max="100" value="100"></div>
@@ -233,12 +250,36 @@
 <div class="modal-overlay hidden" id="loadModal"><div class="modal"><div class="modal-title">Load</div><div id="loadSlots"></div><button class="modal-close" id="closeLoadModal">Close</button></div></div>
 <div class="modal-overlay hidden" id="galleryModal"><div class="modal" style="max-width:480px"><div class="modal-title">Gallery</div><div class="gallery-grid" id="galleryGrid"></div><button class="modal-close" id="closeGalleryModal">Close</button></div></div>
 <div class="modal-overlay hidden" id="backlogModal"><div class="modal" style="max-width:90%;width:500px;max-height:85vh"><div class="modal-title">Backlog</div><div class="backlog-list" id="backlogList"></div><button class="modal-close" id="closeBacklogModal">Close</button></div></div>
+<div class="debug-console hidden" id="debugConsole">
+    <div class="debug-header">
+        <span class="debug-header-title">DEBUG CONSOLE</span>
+        <div class="debug-header-btns">
+            <button class="debug-header-btn" id="debugClear">Clear</button>
+            <button class="debug-header-btn" id="debugClose">✕</button>
+        </div>
+    </div>
+    <div class="debug-log" id="debugLog"></div>
+</div>
 <div class="modal-overlay hidden" id="settingsModal"><div class="modal"><div class="modal-title">Settings</div><div class="setting-row"><span class="setting-label">BGM</span><input type="range" class="setting-slider" id="settingsBgmVolume" min="0" max="100" value="70"></div><div class="setting-row"><span class="setting-label">SE</span><input type="range" class="setting-slider" id="settingsSeVolume" min="0" max="100" value="100"></div><div class="setting-row"><span class="setting-label">Speed</span><input type="range" class="setting-slider" id="settingsTextSpeed" min="0" max="100" value="70"></div><div class="side-menu-title">Font Size</div><div class="size-btns" id="settingsSizeBtns"><button class="size-btn" data-size="s">S</button><button class="size-btn active" data-size="m">M</button><button class="size-btn" data-size="l">L</button></div><button class="modal-close" id="closeSettingsModal">Close</button></div></div>
 <div class="modal-overlay hidden" id="chaptersModal"><div class="modal" style="max-width:400px"><div class="modal-title">Chapters</div><div id="chaptersList" style="display:flex;flex-direction:column;gap:8px;max-height:60vh;overflow-y:auto"></div><button class="modal-close" id="closeChaptersModal">Close</button></div></div>
 <script>
 let scenes=[],imageBlobs={},currentIndex=0,flags={},lastChoiceId=null,seenScenes=new Set(),newSceneUUIDs=new Set(),isGalleryMode=false,backlog=[],chapters=[];
 let bgmVolume=0.7,seVolume=1.0,textSpeed=70,autoSpeed=2000,fontSize='m';
 let isAutoMode=false,isSkipMode=false,isTextHidden=false,autoTimer=null,skipTimer=null,textAnimTimer=null,isTextAnimating=false;
+// Debug Console System
+let debugEnabled=false;
+const debugMaxEntries=500;
+function dlog(msg,type='info'){
+    const con=$('debugLog');if(!con)return;
+    const entry=document.createElement('div');
+    entry.className='debug-log-entry '+type;
+    const now=new Date();
+    const ts=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0')+'.'+String(now.getMilliseconds()).padStart(3,'0');
+    entry.innerHTML='<span class="debug-time">'+ts+'</span>'+msg.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    con.appendChild(entry);
+    if(con.children.length>debugMaxEntries)con.removeChild(con.firstChild);
+    con.scrollTop=con.scrollHeight;
+}
 const seAudios={};const bgmAudios={};let currentBgm=null;let loopingSe={};
 let projectId=null;
 
@@ -350,7 +391,7 @@ function updateSettingsUI(){$('bgmVolume').value=bgmVolume*100;$('seVolume').val
 $('autoSpeed').oninput=e=>{autoSpeed=+e.target.value;saveProgress()};
 document.querySelectorAll('.size-btn').forEach(b=>{b.onclick=()=>{fontSize=b.dataset.size;updateSettingsUI();saveProgress()}});
 
-$('zipInput').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{const zip=await JSZip.loadAsync(file);scenes=[];imageBlobs={};chapters=[];Object.keys(seAudios).forEach(k=>delete seAudios[k]);Object.keys(bgmAudios).forEach(k=>delete bgmAudios[k]);currentBgm=null;const imgFolder=zip.folder('images');if(imgFolder){const files=[];imgFolder.forEach((p,f)=>{if(!f.dir)files.push({p,f})});for(const{p,f}of files){const blob=await f.async('blob');const filename=p.split('/').pop();imageBlobs[filename]=URL.createObjectURL(blob)}}const audioFolder=zip.folder('audio');if(audioFolder){const af=[];audioFolder.forEach((p,f)=>{if(!f.dir)af.push({p,f})});for(const{p,f}of af){const blob=await f.async('blob');const url=URL.createObjectURL(blob);const filename=p.split('/').pop();const name=filename.split('.')[0].toLowerCase();console.log('Audio loaded:',p,'->',name);if(name.startsWith('se')){const audio=new Audio(url);seAudios[name]={audio,url}}else if(name.startsWith('bgm')){const audio=new Audio(url);audio.loop=true;bgmAudios[name]={audio,url}}}}const dataFile=zip.file('data.json');if(dataFile){const json=await dataFile.async('string');const data=JSON.parse(json);projectId=generateProjectId(data.scenes);scenes=(data.scenes||[]).map((s,i)=>({...s,uuid:s.uuid||`scene-${i}-${s.id}`,bgUrl:s.bg&&imageBlobs[s.bg]?imageBlobs[s.bg]:null}));chapters=data.chapters||[];if(data.title)$('gameTitle').textContent=data.title}loadProgress();loadCounters();checkNewScenes();$('startBtn').disabled=false;$('galleryBtn').disabled=false;$('continueBtn').disabled=!getSlotInfo(0).exists;$('chaptersBtn').classList.toggle('hidden',chapters.length===0);updateNewScenesButton()}catch(err){console.error(err);alert('Load error: '+err.message)}};
+$('zipInput').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{const zip=await JSZip.loadAsync(file);scenes=[];imageBlobs={};chapters=[];Object.keys(seAudios).forEach(k=>delete seAudios[k]);Object.keys(bgmAudios).forEach(k=>delete bgmAudios[k]);currentBgm=null;const imgFolder=zip.folder('images');if(imgFolder){const files=[];imgFolder.forEach((p,f)=>{if(!f.dir)files.push({p,f})});for(const{p,f}of files){const blob=await f.async('blob');const filename=p.split('/').pop();imageBlobs[filename]=URL.createObjectURL(blob)}}const audioFolder=zip.folder('audio');if(audioFolder){const af=[];audioFolder.forEach((p,f)=>{if(!f.dir)af.push({p,f})});for(const{p,f}of af){const blob=await f.async('blob');const url=URL.createObjectURL(blob);const filename=p.split('/').pop();const name=filename.split('.')[0].toLowerCase();dlog('Audio loaded: '+p+' -> '+name,'audio');console.log('Audio loaded:',p,'->',name);if(name.startsWith('se')){const audio=new Audio(url);seAudios[name]={audio,url};dlog('  SE registered: '+name,'audio')}else if(name.startsWith('bgm')){const audio=new Audio(url);audio.loop=true;bgmAudios[name]={audio,url};dlog('  BGM registered: '+name,'audio')}}}const dataFile=zip.file('data.json');if(dataFile){const json=await dataFile.async('string');const data=JSON.parse(json);projectId=generateProjectId(data.scenes);scenes=(data.scenes||[]).map((s,i)=>({...s,uuid:s.uuid||`scene-${i}-${s.id}`,bgUrl:s.bg&&imageBlobs[s.bg]?imageBlobs[s.bg]:null}));chapters=data.chapters||[];if(data.title)$('gameTitle').textContent=data.title}loadProgress();loadCounters();checkNewScenes();$('startBtn').disabled=false;$('galleryBtn').disabled=false;$('continueBtn').disabled=!getSlotInfo(0).exists;$('chaptersBtn').classList.toggle('hidden',chapters.length===0);updateNewScenesButton();dlog('ZIP loaded: '+scenes.length+' scenes, '+Object.keys(seAudios).length+' SE ['+Object.keys(seAudios).join(',')+'], '+Object.keys(bgmAudios).length+' BGM ['+Object.keys(bgmAudios).join(',')+'], '+Object.keys(imageBlobs).length+' images','info')}catch(err){console.error(err);dlog('ZIP load error: '+err.message,'error');alert('Load error: '+err.message)}};
 function generateProjectId(s){const str=JSON.stringify(s.map(x=>x.id));let h=0;for(let i=0;i<str.length;i++){h=((h<<5)-h)+str.charCodeAt(i);h|=0}return Math.abs(h).toString(36)}
 function checkNewScenes(){newSceneUUIDs.clear();scenes.forEach(s=>{if(!seenScenes.has(s.uuid))newSceneUUIDs.add(s.uuid)})}
 function updateNewScenesButton(){const b=$('newScenesBtn');if(newSceneUUIDs.size>0){b.classList.remove('hidden');b.classList.add('has-new');b.textContent=`New Scenes (${newSceneUUIDs.size})`;b.disabled=false}else{b.classList.add('hidden')}}
@@ -419,24 +460,26 @@ function doFlash(){flashOverlay.classList.remove('active');void flashOverlay.off
 function doShake(){gameCanvas.classList.remove('shake');void gameCanvas.offsetWidth;gameCanvas.classList.add('shake')}
 function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
 async function playSE(name,count){
+    dlog('playSE: '+name+' count='+count+' keys=['+Object.keys(seAudios).join(',')+']','audio');
     console.log('playSE:',name,count,'seAudios:',Object.keys(seAudios));
     const se=seAudios[name];
-    if(!se){console.log('SE not found:',name);return}
+    if(!se){dlog('SE not found: '+name,'error');console.log('SE not found:',name);return}
     se.audio.volume=seVolume;
-    if(count===0){const loop=()=>{se.audio.currentTime=0;se.audio.play()};se.audio.onended=loop;loop();loopingSe[name]=true;return}
+    if(count===0){const loop=()=>{se.audio.currentTime=0;se.audio.play()};se.audio.onended=loop;loop();loopingSe[name]=true;dlog('SE loop start: '+name,'audio');return}
     // 1回だけ再生開始（awaitしない）
     se.audio.currentTime=0;
-    se.audio.play().catch(e=>console.log('SE play error:',e));
+    se.audio.play().then(()=>dlog('SE playing: '+name,'audio')).catch(e=>{dlog('SE play error: '+name+' '+e.message,'error');console.log('SE play error:',e)});
 }
 function stopSE(name){const se=seAudios[name];if(!se)return;se.audio.pause();se.audio.currentTime=0;se.audio.onended=null;delete loopingSe[name]}
 function stopAllSE(){Object.keys(seAudios).forEach(name=>stopSE(name))}
 function playBGM(name){
+    dlog('playBGM: '+name+' keys=['+Object.keys(bgmAudios).join(',')+']','audio');
     console.log('playBGM:',name,'bgmAudios:',Object.keys(bgmAudios));
     if(currentBgm&&bgmAudios[currentBgm]){bgmAudios[currentBgm].audio.pause();bgmAudios[currentBgm].audio.currentTime=0}
     const bgm=bgmAudios[name];
-    if(!bgm){console.log('BGM not found:',name);return}
+    if(!bgm){dlog('BGM not found: '+name,'error');console.log('BGM not found:',name);return}
     bgm.audio.loop=true;bgm.audio.volume=bgmVolume;
-    bgm.audio.play().catch(e=>console.log('BGM play error:',e));
+    bgm.audio.play().then(()=>dlog('BGM playing: '+name,'audio')).catch(e=>{dlog('BGM play error: '+name+' '+e.message,'error');console.log('BGM play error:',e)});
     currentBgm=name;
 }
 function stopBGM(){if(currentBgm&&bgmAudios[currentBgm]){bgmAudios[currentBgm].audio.pause();bgmAudios[currentBgm].audio.currentTime=0}currentBgm=null}
@@ -554,6 +597,7 @@ async function runOverlay(cmd) {
 }
 
 async function runCmd(cmd){
+    dlog('CMD: '+cmd,'cmd');
     const origCmd = cmd;
     cmd=cmd.toUpperCase().trim(); if(cmd.startsWith('@'))cmd=cmd.slice(1); let m;
     // 新SE構文: SE:name または SE:name:count
@@ -605,6 +649,9 @@ $('startBtn').onclick=()=>startGame(0);$('continueBtn').onclick=continueGame;$('
 $('chaptersBtn').onclick=()=>{const list=$('chaptersList');list.innerHTML='';chapters.forEach((ch,i)=>{if(ch.sceneIndex<0||ch.sceneIndex>=scenes.length)return;const scene=scenes[ch.sceneIndex];const item=document.createElement('div');item.className='chapter-item';item.innerHTML=`<div class="chapter-thumb">${scene.bgUrl?`<img src="${scene.bgUrl}">`:''}}</div><div class="chapter-info"><div class="chapter-title">${ch.comment||'Chapter '+(i+1)}</div><div class="chapter-num">Scene #${ch.sceneIndex+1}</div></div>`;item.onclick=()=>{$('chaptersModal').classList.add('hidden');startGame(ch.sceneIndex)};list.appendChild(item)});$('chaptersModal').classList.remove('hidden')};
 $('ctrlToggleBtn').onclick=()=>$('ctrlMenu').classList.toggle('open');$('hamburgerBtn').onclick=()=>sideMenu.classList.toggle('open');$('closeSideMenu').onclick=()=>sideMenu.classList.remove('open');
 $('sideMenuSave').onclick=()=>{sideMenu.classList.remove('open');openSaveModal()};$('sideMenuLoad').onclick=()=>{sideMenu.classList.remove('open');openLoadModal()};$('sideMenuBacklog').onclick=()=>{sideMenu.classList.remove('open');openBacklog()};$('sideMenuGallery').onclick=()=>{sideMenu.classList.remove('open');openGallery()};$('sideMenuTitle').onclick=returnToTitle;
+$('sideMenuDebug').onclick=()=>{sideMenu.classList.remove('open');$('debugConsole').classList.remove('hidden')};
+$('debugClose').onclick=()=>{$('debugConsole').classList.add('hidden')};
+$('debugClear').onclick=()=>{$('debugLog').innerHTML='';dlog('Console cleared','info')};
 $('hideTextBtn').onclick=toggleTextHidden;$('autoBtn').onclick=toggleAuto;$('skipBtn').onclick=toggleSkip;$('qsaveBtn').onclick=quickSave;$('qloadBtn').onclick=quickLoad;
 $('closeSaveModal').onclick=()=>$('saveModal').classList.add('hidden');$('closeLoadModal').onclick=()=>$('loadModal').classList.add('hidden');$('closeGalleryModal').onclick=()=>$('galleryModal').classList.add('hidden');$('closeBacklogModal').onclick=()=>$('backlogModal').classList.add('hidden');$('closeSettingsModal').onclick=()=>$('settingsModal').classList.add('hidden');$('closeChaptersModal').onclick=()=>$('chaptersModal').classList.add('hidden');
 newScenesBanner.onclick=()=>{const idx=scenes.findIndex((s,i)=>i>currentIndex&&newSceneUUIDs.has(s.uuid));if(idx>=0){currentIndex=idx;showScene()}else{newScenesBanner.classList.add('hidden')}};
