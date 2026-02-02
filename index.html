@@ -548,6 +548,10 @@ function runKeyframeOverlay(filename, points, duration, easing, loopCount, optio
     styleEl.textContent = kfStr;
     document.head.appendChild(styleEl);
     
+    // Set initial position explicitly
+    el.style.left = points[0].x + '%';
+    el.style.top = points[0].y + '%';
+    
     const iterStr = loopCount === Infinity ? 'infinite' : String(loopCount);
     const fillStr = loopCount === Infinity ? 'none' : 'forwards';
     el.style.animation = `${animName} ${duration}ms ${easing} ${iterStr} ${fillStr}`;
