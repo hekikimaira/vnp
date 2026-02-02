@@ -522,8 +522,6 @@ function parseSpeed(s) {
     if (str === 'normal') return 500;
     return parseInt(str) || 500;
 }
-// Keyframe overlay: OVERLAY:file:KEYFRAME:duration:easing:loop:x0,y0>x1,y1>x2,y2...
-// Each point is x%,y% of container. Generates smooth @keyframes animation.
 let keyframeCounter = 0;
 function runKeyframeOverlay(filename, points, duration, easing, loopCount, options) {
     const imgUrl = imageBlobs[filename];
@@ -531,24 +529,21 @@ function runKeyframeOverlay(filename, points, duration, easing, loopCount, optio
     
     const el = document.createElement('div');
     el.className = 'overlay-item';
-    const scaleStr = options.scale ? `;width:${options.scale}%` : '';
     const flipStr = options.flip ? 'transform:scaleX(-1);' : '';
-    el.innerHTML = `<img src="${imgUrl}" style="${flipStr}${scaleStr?'width:'+options.scale+'%':''}">`;
+    const scaleStr = options.scale ? 'width:'+options.scale+'%;' : '';
+    el.innerHTML = `<img src="${imgUrl}" style="${flipStr}${scaleStr}">`;
     el.dataset.overlayId = filename;
     overlayContainer.appendChild(el);
     activeOverlays[filename] = { element: el };
     
-    // Generate @keyframes
     const animName = `ov_kf_${++keyframeCounter}`;
     let kfStr = `@keyframes ${animName} {\n`;
     for (let i = 0; i < points.length; i++) {
         const pct = points.length === 1 ? 0 : Math.round((i / (points.length - 1)) * 100);
-        const p = points[i];
-        kfStr += `  ${pct}% { left:${p.x}%; top:${p.y}%; }\n`;
+        kfStr += `  ${pct}% { left:${points[i].x}%; top:${points[i].y}%; }\n`;
     }
     kfStr += '}';
     
-    // Inject style
     const styleEl = document.createElement('style');
     styleEl.textContent = kfStr;
     document.head.appendChild(styleEl);
@@ -557,21 +552,97 @@ function runKeyframeOverlay(filename, points, duration, easing, loopCount, optio
     const fillStr = loopCount === Infinity ? 'none' : 'forwards';
     el.style.animation = `${animName} ${duration}ms ${easing} ${iterStr} ${fillStr}`;
     
-    dlog('Overlay KEYFRAME: '+filename+' pts='+points.length+' dur='+duration+'ms loop='+iterStr,'cmd');
+    dlog('Overlay KF: '+filename+' pts='+points.length+' dur='+duration+'ms loop='+iterStr,'cmd');
     
-    // Cleanup after finite animation
     if (loopCount !== Infinity) {
-        setTimeout(() => {
-            styleEl.remove();
-        }, duration * loopCount + 100);
+        setTimeout(() => { styleEl.remove(); }, duration * loopCount + 100);
     }
 }
+// Parse new overlay syntax: arrow/JUMP/FLOAT + parentheses
+function parseOverlayNewSyntax(cmd) {
+    // Arrow: ↑(a,b) ↓(a,b) →(a,b) ←(a,b)
+    const arrowMatch = cmd.match(/^([↑↓→←])\((-?[\d.]+),(-?[\d.]+)\)(?::(.+))?$/);
+    if (arrowMatch) {
+        const dir = arrowMatch[1];
+        const a = parseFloat(arrowMatch[2]);
+        const b = parseFloat(arrowMatch[3]);
+        const rest = arrowMatch[4] || '';
+        const restParts = rest.split(':');
+        const speed = parseSpeed(restParts[0]);
+        const easing = parseEasing(restParts[1]);
+        const loopStr = restParts[2];
+        const loopCount = loopStr === 'loop' ? Infinity : (parseInt(loopStr) || 1);
+        
+        let points;
+        if (dir === '↑' || dir === '↓') {
+            // a,b = Y positions, X centered at 50%
+            points = [{ x: 50, y: a }, { x: 50, y: b }];
+        } else {
+            // a,b = X positions, Y centered at 50%
+            points = [{ x: a, y: 50 }, { x: b, y: 50 }];
+        }
+        return { points, speed, easing, loopCount };
+    }
+    
+    // JUMP(x1,y1),(x2,y2):speed:easing:loop
+    const jumpMatch = cmd.match(/^JUMP\((-?[\d.]+),(-?[\d.]+)\),\((-?[\d.]+),(-?[\d.]+)\)(?::(.+))?$/i);
+    if (jumpMatch) {
+        const sx = parseFloat(jumpMatch[1]), sy = parseFloat(jumpMatch[2]);
+        const ex = parseFloat(jumpMatch[3]), ey = parseFloat(jumpMatch[4]);
+        const rest = jumpMatch[5] || '';
+        const restParts = rest.split(':');
+        const speed = parseSpeed(restParts[0] || '800ms');
+        const easing = parseEasing(restParts[1] || 'easeinout');
+        const loopStr = restParts[2];
+        const loopCount = loopStr === 'loop' ? Infinity : (parseInt(loopStr) || 1);
+        
+        // Auto-calc jump height: 30% of distance
+        const dx = Math.abs(ex - sx), dy = Math.abs(ey - sy);
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const jumpHeight = Math.max(dist * 0.3, 15);
+        
+        // Generate parabolic arc (always arcs upward)
+        const steps = 16;
+        const points = [];
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const x = sx + (ex - sx) * t;
+            const baseY = sy + (ey - sy) * t;
+            const arc = -4 * jumpHeight * t * (1 - t);
+            points.push({ x, y: baseY + arc });
+        }
+        return { points, speed, easing, loopCount };
+    }
+    
+    // FLOAT(x,y):speed:loop - hover in place
+    const floatMatch = cmd.match(/^FLOAT\((-?[\d.]+),(-?[\d.]+)\)(?::(.+))?$/i);
+    if (floatMatch) {
+        const x = parseFloat(floatMatch[1]), y = parseFloat(floatMatch[2]);
+        const rest = floatMatch[3] || '';
+        const restParts = rest.split(':');
+        const speed = parseSpeed(restParts[0] || '2000ms');
+        const easing = parseEasing(restParts[1] || 'easeinout');
+        const loopStr = restParts[2];
+        const loopCount = loopStr === 'loop' ? Infinity : (parseInt(loopStr) || 1);
+        
+        const drift = 3; // subtle vertical float
+        const points = [
+            { x, y },
+            { x, y: y - drift },
+            { x, y }
+        ];
+        return { points, speed, easing, loopCount };
+    }
+    
+    return null;
+}
 async function runOverlay(cmd) {
-    // OVERLAY:CLEAR or OVERLAY:CLEAR:fade:300ms or OVERLAY:CLEAR:filename
-    if (cmd.startsWith('CLEAR')) {
+    // OVERLAY:CLEAR
+    if (cmd.toUpperCase().startsWith('CLEAR')) {
         const parts = cmd.slice(5).split(':').filter(p=>p);
         if (parts.length === 0) { overlayContainer.innerHTML = ''; activeOverlays = {}; return; }
-        const isFade = parts.includes('FADE');
+        const upperParts = parts.map(p => p.toUpperCase());
+        const isFade = upperParts.includes('FADE');
         const fadeTime = parts.find(p => /^\d+MS$/i.test(p));
         const filename = parts.find(p => !['FADE'].includes(p.toUpperCase()) && !/^\d+MS$/i.test(p));
         const targets = filename ? [filename] : Object.keys(activeOverlays);
@@ -588,93 +659,28 @@ async function runOverlay(cmd) {
         }
         return;
     }
-    // KEYFRAME mode: OVERLAY:file:KEYFRAME:points:duration:easing:loop:options
-    // points = x,y>x,y>x,y  (% of container)
-    // options = flip,scale50 etc
-    const upperCmd = cmd.toUpperCase();
-    if (upperCmd.includes(':KEYFRAME:') || upperCmd.includes(':KF:')) {
-        const parts = cmd.split(':');
-        const filename = parts[0];
-        const kfIdx = parts.findIndex(p => p.toUpperCase() === 'KEYFRAME' || p.toUpperCase() === 'KF');
-        const pointsStr = parts[kfIdx + 1] || '0,0>100,0';
-        const durationStr = parts[kfIdx + 2];
-        const easingStr = parts[kfIdx + 3];
-        const loopStr = parts[kfIdx + 4];
-        const optStr = parts[kfIdx + 5] || '';
-        
-        const points = pointsStr.split('>').map(p => {
-            const [x, y] = p.split(',').map(Number);
-            return { x: x || 0, y: y || 0 };
-        });
-        const duration = parseSpeed(durationStr || '800ms');
-        const easing = parseEasing(easingStr);
-        const loopCount = loopStr === 'loop' ? Infinity : (parseInt(loopStr) || 1);
-        const options = {};
-        if (optStr) {
-            if (optStr.toLowerCase().includes('flip')) options.flip = true;
-            const sm = optStr.match(/scale(\d+)/i);
-            if (sm) options.scale = parseInt(sm[1]);
-        }
-        runKeyframeOverlay(filename, points, duration, easing, loopCount, options);
-        return;
-    }
-    // JUMP shorthand: OVERLAY:file:JUMP:startX,startY>endX,endY:height:duration:easing:loop:options
-    if (upperCmd.includes(':JUMP:')) {
-        const parts = cmd.split(':');
-        const filename = parts[0];
-        const jIdx = parts.findIndex(p => p.toUpperCase() === 'JUMP');
-        const pathStr = parts[jIdx + 1] || '-20,80>120,80';
-        const heightStr = parts[jIdx + 2] || '40';
-        const durationStr = parts[jIdx + 3];
-        const easingStr = parts[jIdx + 4];
-        const loopStr = parts[jIdx + 5];
-        const optStr = parts[jIdx + 6] || '';
-        
-        // Parse start and end
-        const pathPoints = pathStr.split('>').map(p => {
-            const [x, y] = p.split(',').map(Number);
-            return { x: x || 0, y: y || 0 };
-        });
-        const jumpHeight = parseFloat(heightStr) || 40;
-        const duration = parseSpeed(durationStr || '800ms');
-        const easing = parseEasing(easingStr || 'easeinout');
-        const loopCount = loopStr === 'loop' ? Infinity : (parseInt(loopStr) || 1);
-        const options = {};
-        if (optStr) {
-            if (optStr.toLowerCase().includes('flip')) options.flip = true;
-            const sm = optStr.match(/scale(\d+)/i);
-            if (sm) options.scale = parseInt(sm[1]);
-        }
-        
-        // Generate parabolic arc points (12 steps for smoothness)
-        const steps = 12;
-        const start = pathPoints[0];
-        const end = pathPoints.length > 1 ? pathPoints[1] : { x: start.x + 100, y: start.y };
-        const points = [];
-        for (let i = 0; i <= steps; i++) {
-            const t = i / steps;
-            const x = start.x + (end.x - start.x) * t;
-            const baseY = start.y + (end.y - start.y) * t;
-            // Parabola: peak at t=0.5
-            const arc = -4 * jumpHeight * t * (1 - t);
-            const y = baseY + arc;
-            points.push({ x, y });
-        }
-        
-        runKeyframeOverlay(filename, points, duration, easing, loopCount, options);
-        return;
-    }
-    // OVERLAY:file.png:direction:path:speed:easing:loop
-    // path: -100>50|1000>-100 (position chain with optional delays)
-    const parts = cmd.split(':');
-    const filename = parts[0];
-    const direction = (parts[1] || 'top').toLowerCase();
-    const pathStr = parts[2] || '-100>50';
-    const speedStr = parts[3];
-    const easingStr = parts[4];
-    const loopStr = parts[5];
     
-    // Parse path: positions and delays
+    // Split: filename : motion : rest...
+    const firstColon = cmd.indexOf(':');
+    if (firstColon === -1) return;
+    const filename = cmd.slice(0, firstColon);
+    const motionStr = cmd.slice(firstColon + 1);
+    
+    // Try new syntax (arrow, JUMP, FLOAT)
+    const parsed = parseOverlayNewSyntax(motionStr);
+    if (parsed) {
+        runKeyframeOverlay(filename, parsed.points, parsed.speed, parsed.easing, parsed.loopCount, {});
+        return;
+    }
+    
+    // Legacy: direction:path:speed:easing:loop
+    const parts = motionStr.split(':');
+    const direction = (parts[0] || 'top').toLowerCase();
+    const pathStr = parts[1] || '-100>50';
+    const speedStr = parts[2];
+    const easingStr = parts[3];
+    const loopStr = parts[4];
+    
     const pathParts = pathStr.split('>').map(p => {
         if (p.includes('|')) {
             const [pos, delay] = p.split('|');
@@ -683,14 +689,12 @@ async function runOverlay(cmd) {
         return { pos: parseFloat(p), delay: 0 };
     });
     
-    // Parse speeds (can be comma-separated for each segment)
     const speeds = (speedStr || '500ms').split(',').map(s => parseSpeed(s));
     const easings = (easingStr || 'easeOut').split(',').map(e => parseEasing(e));
     const loopCount = loopStr === 'loop' ? Infinity : (parseInt(loopStr) || 1);
     
-    // Create element
     const imgUrl = imageBlobs[filename];
-    if (!imgUrl) { console.warn('Overlay image not found:', filename); return; }
+    if (!imgUrl) { dlog('Overlay image not found: '+filename,'error'); return; }
     
     const el = document.createElement('div');
     el.className = 'overlay-item';
@@ -699,9 +703,7 @@ async function runOverlay(cmd) {
     overlayContainer.appendChild(el);
     activeOverlays[filename] = { element: el };
     
-    // Set initial position
     const setPosition = (percent) => {
-        // 画像を中央配置してからtransformで移動
         if (direction === 'top' || direction === 'bottom') {
             el.style.left = '50%';
             el.style.transform = `translateX(-50%) translateY(${percent}%)`;
@@ -713,17 +715,15 @@ async function runOverlay(cmd) {
         }
     };
     
-    // Animation function
     const animate = async () => {
         for (let i = 0; i < pathParts.length; i++) {
             const { pos, delay } = pathParts[i];
             const speed = speeds[Math.min(i, speeds.length - 1)];
             const easing = easings[Math.min(i, easings.length - 1)];
-            
             if (i === 0) {
                 el.style.transition = 'none';
                 setPosition(pos);
-                void el.offsetWidth; // force reflow
+                void el.offsetWidth;
             } else {
                 el.style.transition = `all ${speed}ms ${easing}`;
                 setPosition(pos);
@@ -733,9 +733,8 @@ async function runOverlay(cmd) {
         }
     };
     
-    // Run animation loop
     for (let loop = 0; loop < loopCount; loop++) {
-        if (!activeOverlays[filename]) break; // stopped
+        if (!activeOverlays[filename]) break;
         await animate();
     }
 }
