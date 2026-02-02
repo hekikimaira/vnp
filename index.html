@@ -527,6 +527,12 @@ function runKeyframeOverlay(filename, points, duration, easing, loopCount, optio
     const imgUrl = imageBlobs[filename];
     if (!imgUrl) { dlog('Overlay image not found: '+filename,'error'); return; }
     
+    // Remove existing overlay with same filename
+    if (activeOverlays[filename]) {
+        activeOverlays[filename].element.remove();
+        delete activeOverlays[filename];
+    }
+    
     const el = document.createElement('div');
     el.className = 'overlay-item';
     const flipStr = options.flip ? 'transform:scaleX(-1);' : '';
@@ -699,6 +705,12 @@ async function runOverlay(cmd) {
     
     const imgUrl = imageBlobs[filename];
     if (!imgUrl) { dlog('Overlay image not found: '+filename,'error'); return; }
+    
+    // Remove existing overlay with same filename
+    if (activeOverlays[filename]) {
+        activeOverlays[filename].element.remove();
+        delete activeOverlays[filename];
+    }
     
     const el = document.createElement('div');
     el.className = 'overlay-item';
