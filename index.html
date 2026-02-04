@@ -425,8 +425,9 @@ async function applyTransition(type) {
 async function showScene(){
     if (timedChoiceTimer) { clearInterval(timedChoiceTimer); timedChoiceTimer = null; }
     choiceOverlay.classList.add('hidden'); clearTimeout(textAnimTimer); isTextAnimating=false;
-    // Clear overlays on scene change
+    // Clear overlays and looping SE on scene change
     overlayContainer.innerHTML = ''; activeOverlays = {};
+    stopAllSE();
     if(currentIndex<0||currentIndex>=scenes.length){returnToTitle();return}
     const scene=scenes[currentIndex];
     seenScenes.add(scene.uuid); newSceneUUIDs.delete(scene.uuid);
